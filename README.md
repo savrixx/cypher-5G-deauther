@@ -13,15 +13,16 @@ CUSTOM PCB FILES SOON!
 
 Hope to soon add Evil Twin and more???
 
-## How to Upload Firmware
+## How to Upload Firmware / Usage
 
 1) Go to RTL8720DN_SSD1306_FIX folder. You need to first backup any files that will be replaced, and then add this into your Arduino/libraries folder.
     - This fixes bugs that make Adafruit SSD1306 library incompatible with BW16 board.
 2) Upload the firmware using the .ino file via Arduino IDE.
-3) You can also connect to web ui (change credentials in code)
-    defualt -
-    wifi - littlehakr
-    pw - 0123456789
+3) Turn it on and select/attack!
+4) You can also connect to web ui (change credentials in code)
+    wifi= littlehakr
+    pw= 0123456789
+
 
 ## Requirements
 
