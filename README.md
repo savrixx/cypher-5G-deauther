@@ -1,4 +1,5 @@
 # Cypher 5G Deauther
+<img src="img/device1.JPG" alt='5G Deauther' width='400' />
 
 Original Project
 [Link](https://github.com/tesa-klebeband/RTL8720dn-Deauther)
@@ -27,6 +28,23 @@ Hope to soon add Evil Twin and more???
 - SSD1306
 - 3 Buttons
 - BW16 Board (DO NOT BUY BW16E, WILL NOT WORK!!!)
+
+## PICTURES
+<img src="img/device2.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device3.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device4.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device5.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device6.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device7.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device8.JPG" alt='5G Deauther' width='400' />
+
+<img src="img/device9.JPG" alt='5G Deauther' width='400' />
 
 ## Connections
 
