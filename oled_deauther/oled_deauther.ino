@@ -410,7 +410,7 @@ void titleScreen(void) {
   display.drawBitmap(24, 14, image_wifi_not_connected__copy__bits, 19, 16, 1);
   display.drawBitmap(9, 35, image_cross_contour_bits, 11, 16, 1);
   display.display();
-  delay(10000);
+  delay(2000);
 }
 void setup() {
   pinMode(BTN_DOWN, INPUT_PULLUP);
