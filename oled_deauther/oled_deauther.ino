@@ -103,10 +103,10 @@ int scanNetworks() {
   scan_results.clear();
   if (wifi_scan_networks(scanResultHandler, NULL) == RTW_SUCCESS) {
     delay(5000);
-    DEBUG_SER_PRINT(" done!\n");
+    DEBUG_SER_PRINT(" Done!\n");
     return 0;
   } else {
-    DEBUG_SER_PRINT(" failed!\n");
+    DEBUG_SER_PRINT(" Failed!\n");
     return 1;
   }
 }
@@ -175,7 +175,7 @@ void Single() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("Single Attacking...");
+  display.println("Single Attack...");
   display.display();
   while (true) {
     memcpy(deauth_bssid, scan_results[scrollindex].bssid, 6);
@@ -197,7 +197,7 @@ void All() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("All Attacking...");
+  display.println("Attacking All...");
   display.display();
   while (true) {
     if (digitalRead(BTN_OK) == LOW) {
@@ -223,7 +223,7 @@ void BecaonDeauth() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("Becaon+Deauth Attacking...");
+  display.println("Becaon+Deauth Attack...");
   display.display();
   while (true) {
     if (digitalRead(BTN_OK) == LOW) {
@@ -248,7 +248,7 @@ void Becaon() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("Becaon Attacking...");
+  display.println("Becaon Attack...");
   display.display();
   while (true) {
     if (digitalRead(BTN_OK) == LOW) {
@@ -309,7 +309,7 @@ void drawattack() {
       display.setCursor(5, 5);
       selectedmenu("Single Deauth Attack");
       display.setCursor(5, 15);
-      display.println("All Deauth Attack");
+      display.println("ALL Deauth Attack");
       display.setCursor(5, 25);
       display.println("Becaon Attack");
       display.setCursor(5, 35);
