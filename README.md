@@ -57,3 +57,7 @@ Hope to soon add Evil Twin and more???
 ### SSD1306 128x64 .96inch Display
 - **SDA**: PA26  
 - **SCL**: PA25  
+
+## TODO
+- web server to serve the captured .pcap files
+- add module to save .pcap file to SD card
