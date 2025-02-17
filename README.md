@@ -61,3 +61,9 @@ Hope to soon add Evil Twin and more???
 ## TODO
 - web server to serve the captured .pcap files
 - add module to save .pcap file to SD card
+- manage more than one .pcap file per session
+- fix display bug after finishing sniffing
+- attack all  + sniff all
+- improve UX/UI
+- refactor the code
+- add evil twin functionality

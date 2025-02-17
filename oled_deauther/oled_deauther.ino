@@ -85,6 +85,9 @@ struct ManagementData {
 
 ManagementData capturedManagement;
 
+// Webserver
+#include "webserver.h"
+
 // Function to reset both handshake and management frame data.
 void resetCaptureData() {
   capturedHandshake.frameCount = 0;
@@ -881,14 +884,8 @@ void startSniffing() {
       display.println("Sniffing canceled!");
   } else if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES && capturedManagement.frameCount > 0) {
       display.println("Sniffing complete!");
-      digitalWrite(LED_R, LOW);
-      digitalWrite(LED_G, HIGH);
-      digitalWrite(LED_B, LOW);
   } else {
       display.println("Sniff timeout!");
-      digitalWrite(LED_R, HIGH);
-      digitalWrite(LED_G, LOW);
-      digitalWrite(LED_B, LOW);
   }
   display.setCursor(5, 40);
   display.println("Press OK to return");
@@ -906,24 +903,7 @@ void startSniffing() {
 
 #include <vector>
 
-// PCAP Global Header (24 bytes)
-struct PcapGlobalHeader {
-  uint32_t magic_number;
-  uint16_t version_major;
-  uint16_t version_minor;
-  int32_t  thiszone;
-  uint32_t sigfigs;
-  uint32_t snaplen;
-  uint32_t network;
-};
 
-// PCAP Packet Header (16 bytes)
-struct PcapPacketHeader {
-  uint32_t ts_sec;
-  uint32_t ts_usec;
-  uint32_t incl_len;
-  uint32_t orig_len;
-};
 
 // Simple base64 encoder function.
 String base64Encode(const uint8_t *data, size_t length) {
@@ -948,67 +928,6 @@ String base64Encode(const uint8_t *data, size_t length) {
   return encoded;
 }
 
-// Function to generate the PCAP data in a vector.
-std::vector<uint8_t> generatePcapBuffer() {
-  std::vector<uint8_t> pcapData;
-
-  // Build the global header.
-  PcapGlobalHeader gh;
-  gh.magic_number = 0xa1b2c3d4;  // Magic number in little-endian
-  gh.version_major = 2;
-  gh.version_minor = 4;
-  gh.thiszone = 0;
-  gh.sigfigs = 0;
-  gh.snaplen = 65535;
-  gh.network = 127;  // DLT_IEEE802_11_RADIO
-
-  // Append global header bytes.
-  uint8_t* ghPtr = (uint8_t*)&gh;
-  for (size_t i = 0; i < sizeof(gh); i++) {
-    pcapData.push_back(ghPtr[i]);
-  }
-
-  // Minimal Radiotap header (8 bytes)
-  uint8_t minimal_rtap[8] = {0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-  // Helper lambda to write a packet header and data.
-  auto writePacket = [&](const uint8_t* packetData, size_t packetLength) {
-    PcapPacketHeader ph;
-    unsigned long ms = millis();
-    ph.ts_sec = ms / 1000;
-    ph.ts_usec = (ms % 1000) * 1000;
-    // Total packet length = minimal_rtap + captured frame
-    ph.incl_len = packetLength + sizeof(minimal_rtap);
-    ph.orig_len = packetLength + sizeof(minimal_rtap);
-
-    uint8_t* phPtr = (uint8_t*)&ph;
-    for (size_t i = 0; i < sizeof(ph); i++) {
-      pcapData.push_back(phPtr[i]);
-    }
-    // Append the Radiotap header.
-    for (size_t i = 0; i < sizeof(minimal_rtap); i++) {
-      pcapData.push_back(minimal_rtap[i]);
-    }
-    // Append the packet data.
-    for (size_t i = 0; i < packetLength; i++) {
-      pcapData.push_back(packetData[i]);
-    }
-  };
-
-  // Write handshake frames.
-  for (unsigned int i = 0; i < capturedHandshake.frameCount; i++) {
-    HandshakeFrame &hf = capturedHandshake.frames[i];
-    writePacket(hf.data, hf.length);
-  }
-  
-  // Write management frames.
-  for (unsigned int i = 0; i < capturedManagement.frameCount; i++) {
-    ManagementFrame &mf = capturedManagement.frames[i];
-    writePacket(mf.data, mf.length);
-  }
-
-  return pcapData;
-}
 
 // Function to generate the PCAP file, encode it in base64, and send to Serial.
 void sendPcapToSerial() {
@@ -1151,8 +1070,16 @@ void deauthAndSniff() {
     display.println("Sniffing complete!");
     printHandshakeData();
     sendPcapToSerial();
-
     
+    WiFi.disconnect();  // Force a disconnect of the current AP
+
+    delay(500); 
+    WiFi.apbegin(ssid, pass, (char *)String(current_channel).c_str());
+    delay(1000);                    // Wait for AP mode to come up
+    Serial.print("New AP IP: ");
+    Serial.println(WiFi.localIP());
+
+    startWebServer(); // Start webserver to serve captued .pcap file
   } else {
     display.println("Sniff timeout!");
   }
@@ -1161,7 +1088,7 @@ void deauthAndSniff() {
   display.print(capturedHandshake.frameCount);
   display.print("/4");
   display.setCursor(5, 45);
-  display.println("Press OK to return");
+  display.println("Download the .pcap: WiFi.localIP()");
   display.display();
 
   // Wait for user to press OK to return.
