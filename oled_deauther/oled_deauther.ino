@@ -41,6 +41,33 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define TOTAL_MENU_ITEMS 5
 const char* mainMenuItems[TOTAL_MENU_ITEMS] = { "Attack", "Scan", "Select", "Sniff", "Deauth+Sniff" };
 
+// Animation frames for spinner.
+const char spinnerChars[] = { '/', '-', '\\', '|' };
+unsigned int spinnerIndex = 0;
+
+// Constants for the ADC and voltage divider
+#define BATTERY_PIN PB3            // ADC pin connected to the resistor divider junction
+#define ADC_REF_VOLTAGE 3.3        // ADC reference voltage (in volts)
+#define ADC_MAX 1023.0             // Maximum ADC value for a 10-bit ADC
+const unsigned long BATTERY_MEASURE_INTERVAL = 5000; // 30 seconds (in milliseconds)
+unsigned long lastBatteryMeasure = 0;                 // Tracks the last time we measured
+
+// Resistor values (in ohms)
+const float R1 = 68000.0;          // 68kΩ resistor (between battery positive and ADC node)
+const float R2 = 220000.0;         // 220kΩ resistor (between ADC node and ground)
+
+// Voltage divider factor to recover the battery voltage:
+// batteryVoltage = measuredVoltage * (R1 + R2) / R2
+const float voltageDividerFactor = (R1 + R2) / R2; // ≈ 1.3091
+
+// Battery voltage range for calculating percentage (adjust these as needed)
+const float batteryMinVoltage = 3.3; // Voltage at 0%
+const float batteryMaxVoltage = 3.8; // Voltage at 100%
+
+// Store the latest measured values
+float lastBatteryVoltage = 0.0;
+float lastBatteryPercentage = 0.0;
+
 // These globals control which items are visible.
 int menuOffset = 0;     // Either 0 or 1 in our case.
 int selectedIndex = 0;  // 0 to 2 (the visible slot index)
@@ -288,6 +315,12 @@ void drawStatusBar(const char *status) {
   display.setTextColor(BLACK);
   display.setCursor(4, 1);
   display.print(status);
+
+  // Right side: show the last measured battery percentage
+  display.setCursor(SCREEN_WIDTH - 25, 1);
+  display.print(lastBatteryPercentage, 0);
+  display.print("%");
+  
   display.setTextColor(WHITE);
 }
 
@@ -562,6 +595,9 @@ void setup() {
 #endif
   SelectedSSID = scan_results[0].ssid;
   SSIDCh = scan_results[0].channel >= 36 ? "5G" : "2.4G";
+
+      lastBatteryVoltage = getBatteryVoltage(); 
+    lastBatteryPercentage = getBatteryPercentage();
 }
 
 
@@ -827,11 +863,9 @@ void startSniffing() {
   // Enable promiscuous mode.
   enableSniffing();
   
-  // Animation frames for spinner.
-  const char spinnerChars[] = { '/', '-', '\\', '|' };
-  unsigned int spinnerIndex = 0;
+
   
-  // Continue sniffing until we have 4 handshake frames and at least one management frame, or until timeout.
+  // Continue sniffing until we have 4 handshake frames and at least one management frame, or until timeout (if zero handshake frames).
   unsigned long sniffStart = millis();
   const unsigned long timeout = 60000; // 60 seconds timeout
   bool cancelled = false;
@@ -960,12 +994,8 @@ void deauthAndSniff() {
   const unsigned long overallTimeout = 60000; // 60 seconds overall timeout
 
   // Phase durations.
-  const unsigned long deauthInterval = 6000; // 5 seconds deauth phase
-  const unsigned long sniffInterval = 3000;  // 2 seconds sniff phase
-
-  // Spinner animation for the sniff phase.
-  const char spinnerChars[] = { '/', '-', '\\', '|' };
-  unsigned int spinnerIndex = 0;
+  const unsigned long deauthInterval = 6000; // deauth phase
+  const unsigned long sniffInterval = 3000;  // sniff phase
 
   bool cancelled = false;
 
@@ -1100,23 +1130,33 @@ void deauthAndSniff() {
   Serial.println("Finished deauth+sniff cycle.");
 }
 
+// Function to get the battery voltage (in volts)
+float getBatteryVoltage() {
+  int rawADC = analogRead(BATTERY_PIN);                // Read ADC value from PB3
+  float pinVoltage = (rawADC / ADC_MAX) * ADC_REF_VOLTAGE; // Convert ADC reading to voltage at the divider node
+  float batteryVoltage = pinVoltage * voltageDividerFactor; // Calculate actual battery voltage
+  return batteryVoltage;
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
+// Function to calculate battery percentage based on the voltage
+float getBatteryPercentage() {
+  float voltage = getBatteryVoltage();
+  float percentage = (voltage - batteryMinVoltage) / (batteryMaxVoltage - batteryMinVoltage) * 100.0;
+  // Clamp percentage between 0 and 100%
+  if (percentage < 0)   percentage = 0;
+  if (percentage > 100) percentage = 100;
+  return percentage;
+}
 
 void loop() {
   unsigned long currentTime = millis();
-
+  if (currentTime - lastBatteryMeasure >= BATTERY_MEASURE_INTERVAL) {
+    lastBatteryMeasure = currentTime;
+    
+    // Measure battery
+    lastBatteryVoltage = getBatteryVoltage(); 
+    lastBatteryPercentage = getBatteryPercentage();
+  }
   // Always draw the main menu.
   drawMainMenu();
 

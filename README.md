@@ -59,11 +59,14 @@ Hope to soon add Evil Twin and more???
 - **SCL**: PA25  
 
 ## TODO
-- web server to serve the captured .pcap files
-- add module to save .pcap file to SD card
-- manage more than one .pcap file per session
-- fix display bug after finishing sniffing
-- attack all  + sniff all
-- improve UX/UI
-- refactor the code
-- add evil twin functionality
+- [ ] signal strength indicator
+- [x] web server to serve the captured .pcap files
+- [x] battery level display
+- [ ] add module to save .pcap file to SD card
+- [ ] manage more than one .pcap file per session
+- [ ] fix display bug after finishing sniffing
+- [ ] attack all  + sniff all
+- [ ] improve UX/UI
+- [ ] refactor the code
+- [ ] add evil twin functionality
+- [ ] add evil portal functionality
