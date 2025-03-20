@@ -94,6 +94,14 @@ void startWebServer() {
   server.begin();
   Serial.println("Web server started on port 80.");
 
+    display.setCursor(5, 22);
+    display.print("Conneact to 0x7359");
+    display.setCursor(5, 34);
+    display.println("Download pcap from");
+    display.setCursor(5, 46);
+    display.print("http://");
+    display.print(WiFi.localIP());
+
   // Generate the PCAP data once.
   std::vector<uint8_t> pcapData = generatePcapBuffer();
   Serial.print("PCAP size: ");
@@ -102,12 +110,17 @@ void startWebServer() {
 
   // Main server loop.
   while (true) {
+    if (digitalRead(BTN_OK) == LOW) {
+      Serial.println("BTN_OK pressed. Exiting webserver mode.");
+      break;
+    }
+
     WiFiClient client = server.available();
     if (client) {
       Serial.println("Client connected.");
       // Wait up to 5 seconds for client request data.
       unsigned long reqTimeout = millis();
-      while (!client.available() && (millis() - reqTimeout < 5000)) {
+      while (!client.available() && (millis() - reqTimeout < 1000)) {
         delay(10);
       }
       
