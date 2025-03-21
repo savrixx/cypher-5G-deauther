@@ -1,17 +1,15 @@
-# Cypher 5G Deauther
-<img src="img/device1.JPG" alt='5G Deauther' width='400' />
+# 0x7359 Deauther
+<img src="https://github.com/user-attachments/assets/3e4997c1-8edc-400d-b5cb-8219a26b9074" alt='5G Deauther' width='500' />
 
-Original Project
-[Link](https://github.com/tesa-klebeband/RTL8720dn-Deauther)
+### Original Project
+[Original project repo](https://github.com/tesa-klebeband/RTL8720dn-Deauther)
+
+[Divine Zeal's repo](https://github.com/dkyazzentwatwa/cypher-5G-deauther)
 
 ## Main Changes
-I wanted to develop on a portable device that had 2.4ghz but also 5ghz deauthing features. The BW16 isnt compatible with Adafruit SSD1306 libraries without modifications, so adding a screen was difficult. I found a project by Warwick, however I do not like when developers add .bins or their own "upload image tool/flashers"....also don't like when you can't edit the code. Not very "open-source".
+In this new version, I have updated and refined the code. I've tweaked the UI by adding a signal strength indicator and battery level display, and the main feature is that I've also integrated the functionality to sniff deauthed networks, capturing both management and EAPOL frames. The captured frames are automatically compiled into a .pcap file that can be downloaded via browser and processed with hcxpcapngtool to generate a .hc22000 hash file compatible with hashcat.
 
-So i added the Adafruit SSD1306 fix, so now anyone can easliy edit the code and work with the display for you own projects involving BW16!
-
-CUSTOM PCB FILES SOON!
-
-Hope to soon add Evil Twin and more???
+Please note, this is not a final release—there are many improvements planned, and I may eventually focus on a dual BW16 version instead of this one.
 
 ## How to Upload Firmware / Usage
 
@@ -19,33 +17,22 @@ Hope to soon add Evil Twin and more???
     - This fixes bugs that make Adafruit SSD1306 library incompatible with BW16 board.
 2) Upload the firmware using the .ino file via Arduino IDE.
 3) Turn it on and select/attack!
-4) You can also connect to web ui (change credentials in code)
-    wifi= littlehakr
-    pw= 0123456789
+4) Credentials to connect to the network to download the .pcap file
+    wifi=0x7359
+    pw=0123456789
 
 
 ## Requirements
 
 - SSD1306
 - 3 Buttons
-- BW16 Board (DO NOT BUY BW16E, WILL NOT WORK!!!)
+- BW16 Board (DO NOT USE BW16E, 5GHZ DOESN'T WORK PROPERLY WITH IT)
 
 ## PICTURES
-<img src="img/device2.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device3.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device4.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device5.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device6.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device7.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device8.JPG" alt='5G Deauther' width='400' />
-
-<img src="img/device9.JPG" alt='5G Deauther' width='400' />
+<img src="https://github.com/user-attachments/assets/e6b0c5cf-70d0-43fa-b013-4c666d8061ef" width='400' />
+<img src="https://github.com/user-attachments/assets/743730e5-2dff-4091-b4fa-2c1dd8a95930" width='400' />
+<img src="https://github.com/user-attachments/assets/eb828eda-369e-4712-8ea6-f3e9b49f3c3d" width='400' />
+<img src="img/device4.JPG" width='400' />
 
 ## Connections
 
