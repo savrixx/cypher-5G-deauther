@@ -43,7 +43,12 @@ Please note, this is not a final release—there are many improvements planned, 
 
 ### SSD1306 128x64 .96inch Display
 - **SDA**: PA26  
-- **SCL**: PA25  
+- **SCL**: PA25
+
+
+### Schematics
+![image](https://github.com/user-attachments/assets/af81b608-e53c-4197-a662-2dba541cb855)
+
 
 ## TODO
 - [x] signal strength indicator
