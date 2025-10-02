@@ -3,5 +3,6 @@
     "cmake.sourceDirectory": "C:/Users/steve/OneDrive/Documents/GitHub/cypher-5G-deauther/RTL8720DN_SSD1306_FIX/Adafruit_BusIO",
     "idf.pythonInstallPath": "C:\\Espressif\\tools\\idf-python\\3.11.2\\python.exe",
     "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python-envs.pythonProjects": []
+    "python-envs.pythonProjects": [],
+    "idf.portWin": "COM6"
 }
